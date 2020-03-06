@@ -1,0 +1,139 @@
+---
+title: "Twitter reactions to the right-wing terrorist shootings in Hanau"
+author: "Matthias Zaugg"
+date: "2020-03-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Quick analysis of twitter reactions to the right-wing terrorist shootings in Hanau, Germany on 19th february 2020. I played around with this data as an excercise to get into analysis of tweets with R for sociological research. Most of the code is copied & adapted from [this tutorial](https://juanitorduz.github.io/text-mining-networks-and-visualization-plebiscito-tweets/) by [Dr. Juan Camilo Orduz](https://juanitorduz.github.io/)
+
+## Load Packages
+
+```{r libraries, message=FALSE,warning=FALSE }
+# Data Import
+library(jsonlite)
+# Data Wrangling and Visualization
+library(magrittr) # for piped function calls with %>%
+library(plotly)
+library(tidyverse)
+# Date & Time Manipulation.
+library(hms)
+library(lubridate) 
+# Text Mining
+library(tidytext)
+library(wordcloud)
+# Set notebook directory.
+MAIN.DIR <- here::here()
+```
+
+## Read the data
+
+Load the data dump from the JSON-file.
+```{r data, message=FALSE, warning=FALSE}
+all_tweets <- jsonlite::stream_in(file("data/hashtag_hanau_2020-02-19_2020_02_29_dump.json"), verbose = FALSE)
+```
+
+We have a total of 80.5k tweets with the hashtag #Hanau in our dataframe. 
+```{r count}
+nrow(all_tweets)
+```
+
+Grab a subset of the data. 
+``` {r parse}
+tweets_raw <- all_tweets %>%
+  select(datetime, text) %>%
+  filter(!str_detect(string = text, pattern = '@')) %>% # Remove account names
+  as_tibble()
+```
+
+Let's parse the date string into a datetime in order to do a timeline analysis.
+```{r parse_datetime}
+tweets_raw %<>% 
+  mutate(
+    datetime = datetime %>% 
+    parse_date_time(orders = ' %Y-%m-%d %H%M%S') # Parse date.
+  )
+```
+
+## Timeline Analysis
+
+Let's first have a look at when the reactions have been posted.
+```{r plot_timeline}
+# Set the time from UTC to CET (+1h).
+tweets_raw %<>% 
+  mutate(datetime = datetime + 1*60*60)
+
+# Remove the seconds, so we can get a meaninful plot.
+tweets_raw %<>% 
+  mutate(created = datetime %>% round(units = 'mins') %>% as.POSIXct())
+
+# Let's plot it.
+plot <- tweets_raw %>% 
+  count(created) %>% 
+  ggplot(mapping = aes(x = created, y = n)) +
+    theme_light() +
+    geom_line() +
+    xlab(label = 'Date') +
+    ylab(label = NULL) +
+    ggtitle(label = 'Number of Tweets per Minute')
+
+plot %>% ggplotly()
+```
+
+The shooting happened at 22:00 CET. There is a first peak of 27 tweets/minute a few hours after the shooting at 01:08 CET. The biggest peak in the data with 80 tweets/minute is at 20-02.20 14:04 CET, the day after the shooting. On the 2020-02-21 the number of tweets per minute is more than halved and continually decreases the next few days.
+
+## Hashtag Count
+
+Which other hashtags have been combined with the hashtag #Hanau can shed some light on how the reactions are evaluated and framed by the public. So let's inspect that.
+
+``` {r hashtags}
+# Function that gets hashtags of a tweet.
+getHashtags <- function(tweet) {
+  hashtag.vector <- str_extract_all(string = tweet, pattern = '#\\S+', simplify = TRUE) %>%
+    as.character()
+
+  hashtag.string <- NA
+  if (length(hashtag.vector) > 0) {
+    hashtag.string <- hashtag.vector %>% str_c(collapse = ', ')
+  }
+  return(hashtag.string)
+}
+
+# Get the hashtags from our raw data.
+hashtags <- tibble(
+  Hashtags = tweets_raw$text %>% map_chr(.f = ~ getHashtags(tweet = .x))
+)
+
+# Bind the hashtags to our normalized tweets.
+tweets_raw %<>% bind_cols(hashtags)
+
+# Unnest the hashtags.
+hashtags.unnested.df <- tweets_raw %>%
+  select(created, Hashtags) %>%
+  unnest_tokens(input = Hashtags, output = hashtag)
+ 
+# Count the usage of specific hashtags. 
+hashtags.unnested.count <- hashtags.unnested.df %>%
+  filter(hashtag != "hanau") %>% # Filter out #hanau, because that's the hashtag we used to scrape our data.
+  count(hashtag) %>%
+  drop_na()
+
+# Plot the wordcloud.
+wordcloud(
+  words = str_c('#',hashtags.unnested.count$hashtag),
+  freq = hashtags.unnested.count$n,
+  min.freq = 200,
+  colors=brewer.pal(8, 'Dark2')
+)
+```
+
+The tag cloud sheds light on the most used hashtags within the reactions to hanau. Alot of the reactions use either hashtags calling the shooting by the name, as right-wing terrorism/extremism and racism. On the two top ranks are hashtags linking the extreme right AfD-party with the event, as visible in this table of top hashtags.
+``` {r toptags}
+hashtags.unnested.count %>%
+  arrange(desc(n)) %>%
+  head(20)
+```
