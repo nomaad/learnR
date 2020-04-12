@@ -1,0 +1,270 @@
+---
+title: "Tweets der Legislative zu Corona-Ostern"
+author: "Matthias Zaugg"
+date: "2020-04-12"
+categories: ["R", "Technology"]
+tags: ["Twitter", "Text Mining"]
+output: html_document
+reading_time: FALSE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rtweet)
+library(readxl)
+library(jsonlite)
+library(tm)
+library(tidytext)
+library(wordcloud)
+library(magrittr)
+library(hms)
+library(lubridate)
+
+# FUNCTIONS
+
+saveTweets <- function(tweets){
+  now <- Sys.time()
+  file_name <- paste(now, "tweets.json")
+  write_json(tweets,file_name)
+}
+
+drawWordcloud <- function(words, minfreq = 2, colors='Dark2', big=F, tweetcount = ""){
+  set.seed(3377)
+  if(!big){
+    wordcloud(
+      words = words$word,
+      freq = words$n,
+      scale = c(2,0.3),
+      min.freq = minfreq,
+      max.words = 70,
+      colors=colors,
+    )
+  }
+  else{
+    wordcloud(
+      words = words$word,
+      freq = words$n,
+      min.freq = minfreq,
+      max.words = 100,
+      colors=brewer.pal(6, colors),
+    )
+  }
+
+  # draw barplot of 10 most frequent words
+  data <- head(arrange(words,desc(n)), 10)
+  barplot(data$n,
+        main = paste("Häufigste Wörter (Total Tweets: ", tweetcount, ")"),
+        ylab = "Anzahl Nennungen",
+        names.arg = data$word,
+        cex.names=0.7,
+        las = 3)
+}
+
+getCountedWords <- function(tweets_raw){
+  tweets <- tweets_raw %>%
+    # Convert to lowercase.
+    mutate(text = text %>% str_to_lower) %>%
+    # Remove unwanted characters.
+    mutate(text = text %>% str_remove_all(pattern = '\\n')) %>%
+    mutate(text = text %>% str_remove_all(pattern = '&amp')) %>%
+    mutate(text = text %>% str_remove_all(pattern = 'https://t.co/[a-z,A-Z,0-9]*')) %>%
+    mutate(text = text %>% str_remove_all(pattern = 'http://t.co/[a-z,A-Z,0-9]*')) %>%
+    mutate(text = text %>% str_remove_all(pattern = 'https://twitter.com/[a-z,A-Z,0-9]*')) %>%
+    mutate(text = text %>% str_remove_all(pattern = 'http://twitter.com/[a-z,A-Z,0-9]*')) %>%
+    mutate(text = text %>% str_remove_all(pattern = 'https')) %>%
+    mutate(text = text %>% str_remove_all(pattern = 'http')) #%>%
+
+  # Convert to corpus.
+  corpus <-  Corpus(x = VectorSource(x = tweets$text))
+
+  tweets_text <- corpus %>%
+    tm_map(removePunctuation) %>%
+    tm_map(removeNumbers) %>%
+    tm_map(removeWords, stopwords('german')) %>%
+    tm_map(removeWords, stopwords('french')) %>%
+    tm_map(removeWords, stopwords('italian')) %>%
+    tm_map(removeWords, stopwords('english')) %>%
+    tm_map(removeWords, c('via', 'dass', 'beim', 'heute', 'aussi', 'wer', 'geht')) %>%
+    tm_map(PlainTextDocument) # %>%
+
+  # Recover data into original tibble.
+  tweets %<>% mutate(text = tweets_text[[1]]$content) # with margrittr syntax..
+
+  # Unnest the words
+  tweets.unnested <- tweets %>%
+    select(created_at, text) %>%
+    unnest_tokens(input = text, output = word)
+
+  # Count the usage of specific words.
+  tweets.unnested.count <- tweets.unnested %>%
+    count(word) %>%
+    drop_na()
+
+  return(tweets.unnested.count)
+}
+```
+
+
+```{r politicians, include=FALSE, warning=FALSE}
+
+# find all active politicians
+destfile <- "Ratsmitglieder_1848_DE.xlsx"
+if(!file.exists(destfile)){
+  url <- "https://www.parlament.ch/_layouts/15/itsystems.pd.internet/documents/CouncilMembersExcelExportHandler.ashx?language=DE&filename=Ratsmitglieder_1848_DE.xlsx"
+  download.file(url, destfile, mode="wb")
+}
+politicians <- read_xlsx(destfile)
+politicians <- politicians %>%
+  filter(politicians$Active == T)
+
+# get some twitter profiles from the list of nationalcouncil candidates
+candidates.nc <- read.csv("https://raw.githubusercontent.com/DigDemLab/chvote19_accounts/master/2019_chvote_nationalcouncil.csv", header=TRUE, sep=";", fill=TRUE, quote="")
+candidates.nc <- candidates.nc %>%
+  filter(!is.na(LINK_Twitter))
+
+# do the same for the council of states candidates
+candidates.cs <- read.csv("https://raw.githubusercontent.com/DigDemLab/chvote19_accounts/master/2019_chvote_councilofstates.csv", header=TRUE, sep=",", fill=TRUE, quote="")
+candidates.cs <- candidates.cs %>%
+  filter(!is.na(LINK_Twitter))
+
+# get the fullname for joining the datasets
+politicians$fullname <- paste(politicians$LastName, politicians$FirstName, sep=" ")
+candidates.nc$fullname <- paste(candidates.nc$name_bfs, candidates.nc$vorname_bfs, sep=" ")
+candidates.cs$fullname <- paste(candidates.cs$lastname, candidates.cs$firstname, sep=" ")
+
+# filter out unneeded columns and put all candidates in one dataframe
+candidates.nc <- candidates.nc %>%
+                    select(firstname, lastname, fullname, gender, year_of_birth, age, zip, city, country, party_short, district, LINK_personal_website, LINK_facebook, LINK_Twitter, LINK_Instagram)
+candidates.cs <- candidates.cs %>%
+                    select(firstname, lastname, fullname, gender, year_of_birth, age, zip, city, country, party_short, district, LINK_personal_website, LINK_facebook, LINK_Twitter, LINK_Instagram)
+candidates <- rbind(candidates.nc, candidates.cs, all=T)
+
+# remove duplicates
+candidates <- candidates %>%
+  group_by(fullname) %>%
+  summarise_each(funs(first(na.omit(.))))
+
+# join with active politicians to find all twitterers
+twitterers <- left_join(politicians, candidates, by = "fullname")
+twitterers <- twitterers %>%
+  filter(!is.na(LINK_Twitter))
+
+# extract username
+twitterers$twittername <- str_match(twitterers$LINK_Twitter, "https?://(www.)?twitter.com/(#!/)?@?([^/?]*)([^?]*)")[,4]
+
+```
+
+
+
+```{r tweets, include=FALSE, warning=FALSE}
+## get the tweets either from the API or from the local storage
+
+# appname <- "App Name"
+# key <- "your-key"
+# secret <- "your-secret"
+# access_token ="your-access-token"
+# access_secret ="your-access-secret"
+
+## create token
+# twitter_token <- create_token(
+#   app = appname,
+#   consumer_key = key,
+#   consumer_secret = secret,
+#   access_token = access_token,
+#   access_secret = access_secret)
+
+## get latest tweets from API
+#last.tweets <- get_timelines(twitterers$twittername, n=1) # get the last tweet for each politician
+#saveTweets(last.tweets)
+
+# or load from local JSON..
+last.tweets <- stream_in(file("2020-04-12 14:29:24tweets.json"), verbose = TRUE)
+
+# join with original data and clean up
+tweets_raw <- left_join(twitterers, last.tweets, by = c("twittername" = "screen_name"))
+tweets_raw %<>%
+  mutate(
+    created_at = created_at %>%
+    parse_date_time(orders = ' %Y-%m-%d %H%M%S')
+  )
+tweets <- tweets_raw %>%
+            filter(created_at >= as.Date("2020-04-02")) %>% # just take tweets from the last 10 days
+            select(firstname, lastname, fullname, party_short, district, created_at, text)
+```
+
+In der Quarantäne mit dem Osterhasen wollte ich wissen, was eigentlich National- und Ständeräte zu dieser Zeit so twittern. Dazu habe ich ein RMarkdown-Skript geschrieben ([Quellcode](https://github.com/nomaad/learnR/blob/master/2020-04-12-was-twittert-die-legislative.Rmd)). Hier die Resultate.
+
+Zuerst ein paar Worte zum Vorgehen. Das [Digital Democracy Lab](https://digdemlab.io/) der Universität Zürich hat für die Wahlen letzten Herbst [zwei Datasets](https://github.com/DigDemLab/chvote19_accounts) mit allen National- und Ständeratskandidat\*innen zusammengetragen. Darin befinden sich auch persönliche Websiten sowie Social-Media-Accounts der Politiker\*innen, sofern sie solche besitzen. Diese Daten habe ich kombiniert mit einer Excel-Datei der aktuellen Ratsmitgliedern von [parlament.ch](https://www.parlament.ch/de/ratsmitglieder). Anschliessend habe ich alle Datensätze ohne Twitter-Account rausgefiltert.
+
+Für jede\*n Politiker\*in mit Twitter-Konto habe ich dann die letzten 10 Tweets über die Twitter-API geladen und mittels Text-Mining die am häufigsten getwitterten Worte in verschiedenen Wordclouds visualisiert. Tweets, welche mehr als 10 Tage alt sind, wurden rausgelöscht. Ausserdem wurden häufige "Stopwords" in Deutsch, Französisch, Italienisch und Englisch rausgefiltert. Und was beschäftigt nun die Legislative auf Bundesebene an Corona-Ostern? Das habe ich mir erst für sämtliche Tweets und dann pro Partei angeschaut. Die Resultate sind selbstverständlich nur eine Momentaufnahme und geben ein sehr spezifisches Stimmungsbild wieder, welches an einem anderen Tag womöglich völlig anders aussehen würde.
+
+# Alle Parteien
+
+Die erste Wordcloud zeigt die häufigsten Worte aus den Tweets sämtlicher Parteien. `COVID` ist mit über 70 Nennungen das am häufigsten erwähnte Wort - welch Wunder. Sowieso erstaunt es wenig, dass das `Coronavirus` und die `Coronakrise` Top-Themen sind. Auch oft erwähnt werden der `Bundesrat` sowie die anlässlich des Coronavirus getroffenen `Massnahmen`.
+
+```{r all, echo=FALSE, warning=FALSE}
+
+words.all <- getCountedWords(tweets)
+drawWordcloud(words.all, big=T, tweetcount=nrow(tweets))
+```
+
+# Schweizerische Volkspartei (SVP)
+
+Bei der SVP steht in gewohnter Manier die `Schweiz` an erster Stelle. Das `Coronavirus` erscheint hier selbstverständlich auch, aber nicht als Krise. Auch sind die `Massnahmen` des `Bundesrates` und der `Lockdown` ein Thema.
+
+```{r svp, echo=FALSE, warning=FALSE}
+tweets.svp <- filter(tweets, party_short =="SVP")
+words.svp <- getCountedWords(tweets.svp)
+drawWordcloud(words.svp, 1, c("darkgreen", "gold"), tweetcount = nrow(tweets.svp))
+```
+
+# Sozialdemokratische Partei (SP)
+
+Bei der SP `müssen` nun wohl `Massnahmen` ergriffen werden, vermutlich betreffend den `Kitas`. Ganz meine Meinung. Hier wird ausserdem weniger über das Coronavirus getwittert, sondern eher über die davon ausgelöste `Coronakrise` und die Krankheit `COVID`.
+
+```{r sp, echo=FALSE, warning=FALSE}
+tweets.sp <- filter(tweets, party_short =="SP")
+words.sp <- getCountedWords(tweets.sp)
+drawWordcloud(words.sp, 1, c("red2","red4"), tweetcount = nrow(tweets.sp))
+```
+
+# Grüne Partei der Schweiz (GPS)
+
+Auch bei den Grünen geht es primär um `COVID`, jedoch kommt zur `Coronakrise` auch noch die `Klimakrise` dazu. Das zeigt sich unter anderem auch an weniger häufig genannten Wörtern wie `savepeoplenotplanes` oder `Luftverkehr`. Spannend finde ich, dass auch bei der zweiten linken Partei der Begriff `müssen` unter den häufigsten Wörtern vorkommt. Ausserdem geht es auch bei den Grünen um `Massnahmen` und den `Bundesrat`.
+
+```{r gruene, echo=FALSE, warning=FALSE}
+tweets.gruene <- filter(tweets, party_short =="Grüne")
+words.gruene <- getCountedWords(tweets.gruene)
+drawWordcloud(words.gruene, 1, c("green3", "green4"), tweetcount = nrow(tweets.gruene))
+```
+
+# Grüneliberale Partei (glp)
+
+Bei den Grünliberalen geht es anscheinend um Geld, nämlich um `Kredite`. Womöglich braucht es für deren Vergabe `Kriterien` des `Bundesrat` während dieser `Krise`?
+
+```{r glp, echo=FALSE, warning=FALSE}
+tweets.glp <- filter(tweets, party_short =="glp")
+words.glp <- getCountedWords(tweets.glp)
+drawWordcloud(words.glp, 1, c("gray37", "forestgreen"), tweetcount = nrow(tweets.glp))
+```
+
+# FDP.Die Liberalen (FDP)
+
+Die Liberalen erwähnen mit `fdpliberalen` und `fdpag` vor allem sich selber. Bezüglich zweiterem Begriff frage ich mich gerade, ob die FDP nun eine AG werden will? Würde mich ja nicht erstaunen. Aber vielleicht geht's dann doch eher nur um den Aargau. Ansonsten ist auch hier `COVID` und die `Coronakrise` Top-Thema, wie auch der Bundesrat (hier aber effizient abgekürzt als `br`). Und was ist das denn? Ein Ja zur Sicherheit (`sicherheitja`)? Wie das wohl zu verstehen ist? Egal, der Markt wird es schon regeln.
+
+```{r fdp, echo=FALSE, warning=FALSE}
+tweets.fdp <- filter(tweets, party_short =="FDP")
+words.fdp <- getCountedWords(tweets.fdp)
+drawWordcloud(words.fdp, 1, c("royalblue2", "royalblue4"), tweetcount = nrow(tweets.fdp))
+```
+
+# Christlichdemokratische Volkspartei (CVP)
+
+Nicht vergessen sollten wir bei alledem, das heute ein Feiertag ist. Die CVP vergisst das nicht. Wie von guten Katholiken nicht anders zu erwarten, steht `Ostern` an erster Stelle. Nicht mal `COVID` ist wichtiger, obwohl die beiden Begriffe Kopf an Kopf an der Spitze liegen. Die `Schweiz` liegt hier zwar nicht ganz so weit vorne wie bei der SVP, aber doch auch auf Rang 3. Ausserdem wird auch hier über den `Bundesrat` und Corona in verschiedenen Varianten gezwitschert. Des weiteren taucht ein neuer Akteur auf: die `Armee`! Ich spekuliere darauf, dass sich Militärhelme vorzüglich zum Eiertütschen in Selbstisolation eignen. Frohe Ostern!
+
+```{r cvp, echo=FALSE, warning=FALSE}
+tweets.cvp <- filter(tweets, party_short =="CVP")
+words.cvp <- getCountedWords(tweets.cvp)
+drawWordcloud(words.cvp, 1, c("orange2", "orange4"), tweetcount = nrow(tweets.cvp))
+```
