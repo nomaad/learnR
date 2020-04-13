@@ -2,8 +2,8 @@
 title: "Tweets der Legislative zu Corona-Ostern"
 author: "Matthias Zaugg"
 date: "2020-04-12"
-categories: ["R", "Technology"]
-tags: ["Twitter", "Text Mining"]
+categories: ["Tech"]
+tags: ["Twitter", "Text Mining", "R"]
 output: html_document
 reading_time: FALSE
 ---
@@ -137,7 +137,7 @@ candidates.cs$fullname <- paste(candidates.cs$lastname, candidates.cs$firstname,
 candidates.nc <- candidates.nc %>%
                     select(firstname, lastname, fullname, gender, year_of_birth, age, zip, city, country, party_short, district, LINK_personal_website, LINK_facebook, LINK_Twitter, LINK_Instagram)
 candidates.cs <- candidates.cs %>%
-                    select(firstname, lastname, fullname, gender, year_of_birth, age, zip, city, country, party_short, district, LINK_personal_website, LINK_facebook, LINK_Twitter, LINK_Instagram)
+                select(firstname, lastname, fullname, gender, year_of_birth, age, zip, city, country, party_short, district, LINK_personal_website, LINK_facebook, LINK_Twitter, LINK_Instagram)
 candidates <- rbind(candidates.nc, candidates.cs, all=T)
 
 # remove duplicates
@@ -181,7 +181,7 @@ twitterers$twittername <- str_match(twitterers$LINK_Twitter, "https?://(www.)?tw
 # or load from local JSON..
 last.tweets <- stream_in(file("2020-04-12 14:29:24tweets.json"), verbose = TRUE)
 
-# join with original data and clean up
+# join with original data and clean uo
 tweets_raw <- left_join(twitterers, last.tweets, by = c("twittername" = "screen_name"))
 tweets_raw %<>%
   mutate(
@@ -193,11 +193,11 @@ tweets <- tweets_raw %>%
             select(firstname, lastname, fullname, party_short, district, created_at, text)
 ```
 
-In der Quarantäne mit dem Osterhasen wollte ich wissen, was eigentlich National- und Ständeräte zu dieser Zeit so twittern. Dazu habe ich ein RMarkdown-Skript geschrieben ([Quellcode](https://github.com/nomaad/learnR/blob/master/2020-04-12-was-twittert-die-legislative.Rmd)). Hier die Resultate.
+Im Lockdown am Ostersonntag wollte ich wissen, was eigentlich National- und Ständeräte zu dieser Zeit so twittern. Dazu habe ich ein RMarkdown-Skript geschrieben ([Quellcode](https://github.com/nomaad/learnR/blob/master/2020-04-12-was-twittert-die-legislative.Rmd)). Hier die Resultate.
 
 Zuerst ein paar Worte zum Vorgehen. Das [Digital Democracy Lab](https://digdemlab.io/) der Universität Zürich hat für die Wahlen letzten Herbst [zwei Datasets](https://github.com/DigDemLab/chvote19_accounts) mit allen National- und Ständeratskandidat\*innen zusammengetragen. Darin befinden sich auch persönliche Websiten sowie Social-Media-Accounts der Politiker\*innen, sofern sie solche besitzen. Diese Daten habe ich kombiniert mit einer Excel-Datei der aktuellen Ratsmitgliedern von [parlament.ch](https://www.parlament.ch/de/ratsmitglieder). Anschliessend habe ich alle Datensätze ohne Twitter-Account rausgefiltert.
 
-Für jede\*n Politiker\*in mit Twitter-Konto habe ich dann die letzten 10 Tweets über die Twitter-API geladen und mittels Text-Mining die am häufigsten getwitterten Worte in verschiedenen Wordclouds visualisiert. Tweets, welche mehr als 10 Tage alt sind, wurden rausgelöscht. Ausserdem wurden häufige "Stopwords" in Deutsch, Französisch, Italienisch und Englisch rausgefiltert. Und was beschäftigt nun die Legislative auf Bundesebene an Corona-Ostern? Das habe ich mir erst für sämtliche Tweets und dann pro Partei angeschaut. Die Resultate sind selbstverständlich nur eine Momentaufnahme und geben ein sehr spezifisches Stimmungsbild wieder, welches an einem anderen Tag womöglich völlig anders aussehen würde.
+Für jede\*n Politiker\*in mit Twitter-Konto habe ich dann die letzten 10 Tweets über die Twitter-API geladen und mittels Text-Mining die am häufigsten getwitterten Worte in verschiedenen Wordclouds visualisiert. Tweets, welche mehr als 10 Tage alt sind, wurden rausgelöscht. Ausserdem wurden häufige "Stopwords" in Deutsch, Französisch, Italienisch und Englisch rausgefiltert. Und was beschäftigt nun die Legislative auf Bundesebene an Corona-Ostern? Das habe ich mir erst für sämtliche Tweets und dann pro Partei angeschaut. Die Resultate sind objektiv selbstverständlich nur eine Momentaufnahme und geben einen sehr spezifischen Zeitpunkt wieder. Nicht nur deshalb, sondern auch wegen der Notwendigkeit der Interpretation (welche bei mir heute zuweilen polemisch ausfiel), könnte das Ergebnis an einem anderen Tag womöglich völlig anders aussehen.
 
 # Alle Parteien
 
@@ -261,7 +261,7 @@ drawWordcloud(words.fdp, 1, c("royalblue2", "royalblue4"), tweetcount = nrow(twe
 
 # Christlichdemokratische Volkspartei (CVP)
 
-Nicht vergessen sollten wir bei alledem, das heute ein Feiertag ist. Die CVP vergisst das nicht. Wie von guten Katholiken nicht anders zu erwarten, steht `Ostern` an erster Stelle. Nicht mal `COVID` ist wichtiger, obwohl die beiden Begriffe Kopf an Kopf an der Spitze liegen. Die `Schweiz` liegt hier zwar nicht ganz so weit vorne wie bei der SVP, aber doch auch auf Rang 3. Ausserdem wird auch hier über den `Bundesrat` und Corona in verschiedenen Varianten gezwitschert. Des weiteren taucht ein neuer Akteur auf: die `Armee`! Ich spekuliere darauf, dass sich Militärhelme vorzüglich zum Eiertütschen in Selbstisolation eignen. Frohe Ostern!
+Nicht vergessen gehen sollte bei alledem, dass heute ein Feiertag ist. Die CVP vergisst das nicht. Wie von guten Katholiken nicht anders zu erwarten, steht `Ostern` an erster Stelle. Nicht mal `COVID` ist wichtiger, obwohl die beiden Begriffe Kopf an Kopf an der Spitze liegen. Die `Schweiz` liegt hier zwar nicht ganz so weit vorne wie bei der SVP, aber doch auch auf Rang 3. Ausserdem wird auch hier über den `Bundesrat` und Corona in verschiedenen Varianten gezwitschert. Des weiteren taucht ein neuer Akteur auf: die `Armee`. Ich spekuliere darauf, dass sich Militärhelme vorzüglich zum "Eiertütschen" in Selbstisolation eignen. Frohe Ostern!
 
 ```{r cvp, echo=FALSE, warning=FALSE}
 tweets.cvp <- filter(tweets, party_short =="CVP")
